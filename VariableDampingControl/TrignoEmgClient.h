@@ -1,0 +1,120 @@
+#include <boost/asio.hpp>
+#include <exception>
+#include <stdio.h>
+#include <string>
+#include <map>
+#include <array>
+#include <queue>
+#include "H5Cpp.h"
+/* Boost filesystem */
+#include <boost/filesystem.hpp>
+#include <boost/filesystem/fstream.hpp>
+#include <boost/filesystem/path.hpp>
+
+using boost::asio::ip::tcp;
+using namespace boost::filesystem;
+using namespace H5;
+
+class TrignoEmgClient{
+
+private:
+
+    /* Trigno IP Address */
+    std::string _ipAddr;                    // IPv4 address
+    boost::asio::ip::address _addr;
+
+    /* Trigno Ports */
+    const unsigned short _portComm = 50040;   // Communication port
+    const unsigned short _portData = 50041;   // EMG data port
+
+    /* Trigno Endpoints */
+    tcp::endpoint _endpointComm;
+    tcp::endpoint _endpointData;
+
+    /* Trigno Sockets */
+    boost::asio::io_context io_context_comm;
+    boost::asio::io_context io_context_data;
+    tcp::socket _sockComm{io_context_comm}; // synchronous socket
+    tcp::socket _sockData{io_context_data}; // synchronous socket
+
+    /* Data Stream constants */
+    static const unsigned short _nSensors = 16;
+    const unsigned short _nBytesPerFloat = 4;
+
+    /* Connection Status */
+    bool _connectedDataPort = false;
+    bool _connectedCommPort = false;
+
+    /* HDF5 Variables */
+    static const int rank           = 2;
+    static const int chunkRows      = 10000;
+    hsize_t chunkDims[rank]         = {(hsize_t) chunkRows, (hsize_t) _nSensors};   // dataset dimensions at creation
+    hsize_t fspaceMaxDims[rank]     = {   H5S_UNLIMITED   , (hsize_t) _nSensors};
+    hsize_t fspaceDims[rank]        = {(hsize_t) chunkRows, (hsize_t) _nSensors};
+    hsize_t writespaceDims[rank]    = {(hsize_t) chunkRows, (hsize_t) _nSensors};
+    hsize_t fspaceOffset[rank]      = {0,0};                                        // offset must be kept track of to append in correct places
+    const hsize_t noOffset[rank]    = {0,0};
+
+    DataSpace mspace    = DataSpace(rank, chunkDims, fspaceMaxDims);
+    DataSpace fspace    = DataSpace(rank, chunkDims, fspaceMaxDims);        // memory space                                 // file space
+    DataSet datasetEmg  = DataSet();                                   // emg dataset
+    DSetCreatPropList dsPropList;               // Dataset Creation Property List
+    bool _firstWrite;
+
+    /* Data Queue */
+    float _dataArr[chunkRows][_nSensors];
+    bool _writeFlag = false;                    // flag to signal to save to _dataQueue
+    int _rowCount = 0;                          // number of emg reads since last write
+
+	/* Commands */
+	std::map<int, std::string> _cmds;
+
+	/* Reply Variables */
+	static const int MAXLENGTH = 1024;
+    static const int MAXDATALENGTH = 64000;  // 1000 rows * 16 floats * 4 bytes per float
+	char _replyComm[MAXDATALENGTH];
+	char _replyData[MAXDATALENGTH];
+
+    /* Emg List */
+    int * _emgList;
+    int _nActiveEmgSensors = 16;
+
+    /* Filestream */
+    boost::filesystem::ofstream _ofs;
+    bool _writeToFileStreamFlag = false;
+      float _dataArrFileStream[chunkRows][_nSensors];
+
+
+	/* Functions */
+    void GetReplyComm();
+    void WriteH5Chunk();
+    std::string RemoveNewlines(std::string str_in);
+
+public:
+	/* PUBLIC FUNCTIONS */
+    TrignoEmgClient();                              // Constructor
+    TrignoEmgClient(std::string ipAddr);            // Constructor
+    ~TrignoEmgClient();                             // Destructor
+    void SetIpAddress(std::string ipAddr);
+    void SetEmgToSave(int emgList[], int nEmgs);
+    /* Connect Ports */
+    void ConnectDataPort();
+    void ConnectCommPort();
+    /* Commands */
+	   void SendCommand(int cmd);
+    /* Get Internal Status */
+    bool IsCommPortConnected();
+    bool IsDataPortConnected();
+    bool IsWriting();
+    /* Start/Stop Receiving Data */
+    void ReceiveDataStream();
+    void StopReceiveDataStream();
+    /* Start/Stop writing data */
+    void StartWriting(H5Location * h5loc);
+    void StopWriting();
+
+    void StartWritingFileStream(path filepath);
+    void StopWritingFileStream();
+
+    void IsSensorPaired(int sensorNumber);
+};
